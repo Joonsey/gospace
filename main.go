@@ -24,8 +24,8 @@ type Vec2 struct {
 
 type CelestialBody struct {
 	parent           *CelestialBody // Pointer to the parent entity, nil if no parent
-	orbit            *Orbit  // Orbital parameters, nil if not in an orbit
-	last_update_time int64   // Timestamp of the last position update
+	orbit            *Orbit         // Orbital parameters, nil if not in an orbit
+	last_update_time int64          // Timestamp of the last position update
 }
 
 type Orbit struct {
