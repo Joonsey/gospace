@@ -44,11 +44,6 @@ type Game struct {
 // Update proceeds the game state.
 // Update is called every tick (1/60 [s] by default).
 func (g *Game) Update() error {
-	g.orbit.position_on_orbit += 0.001
-	if g.orbit.position_on_orbit >= 1.0 {
-		g.orbit.position_on_orbit = 0.0
-	}
-
 	if inpututil.IsKeyJustPressed(ebiten.KeyW) {
 		g.orbit.apoapsis += 10
 	}
@@ -115,7 +110,18 @@ func (g *Game) DrawObjectOnOrbit(screen *ebiten.Image) {
 	theta := g.orbit.position_on_orbit * 2 * math.Pi
 	e := (a - g.orbit.periapsis) / a
 
-	// Get the current position of the object on the orbit
+	r := a * (1 - e*e) / (1 + e*math.Cos(theta))
+	// TODO:
+	// move this into it's on method and call it at each game update
+	// and use inherit mass / gravity
+	v := math.Sqrt(5.9 * math.Pow(8, 2) / 60 * (2/r - 1/a))
+
+	g.orbit.position_on_orbit += v / 100
+
+	if g.orbit.position_on_orbit >= 1 {
+		g.orbit.position_on_orbit = 0
+	}
+
 	x, y := TrueAnomalyToPosition(a, e, g.orbit.inclination, theta)
 
 	// Draw the object as a small circle
@@ -137,9 +143,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	g.DrawOrbit(screen)
 
-	g.DrawObjectOnOrbit(screen)
-
 	g.DrawFocalPoint(screen)
+
+	g.DrawObjectOnOrbit(screen)
 }
 
 // Layout takes the outside size (e.g., the window size) and returns the (logical) screen size.
