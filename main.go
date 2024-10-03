@@ -6,7 +6,6 @@ import (
 	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
@@ -23,45 +22,34 @@ type Vec2 struct {
 }
 
 type CelestialBody struct {
-	parent           *CelestialBody // Pointer to the parent entity, nil if no parent
-	orbit            *Orbit         // Orbital parameters, nil if not in an orbit
-	last_update_time int64          // Timestamp of the last position update
+	parent            *CelestialBody // Pointer to the parent entity, nil if no parent
+	orbit             *Orbit         // Orbital parameters, nil if not in an orbit
+	last_update_time  int64          // Timestamp of the last position update
+	position_on_orbit float64        // Current position in the orbit as a fraction of the period
+	mass              float64        // Mass of the celestial body
+	gravity           float64        // Gravitational pull force
 }
 
 type Orbit struct {
-	inclination       float64 // Inclination of the orbit
-	apoapsis          float64 // Apoapsis
-	periapsis         float64 // Periapsis
-	period            float64 // Orbital period
-	position_on_orbit float64 // Current position in the orbit as a fraction of the period
+	inclination float64 // Inclination of the orbit
+	apoapsis    float64 // Apoapsis
+	periapsis   float64 // Periapsis
+	period      float64 // Orbital period
 }
 
-// Game implements ebiten.Game interface.
 type Game struct {
-	orbit Orbit
+	sun   CelestialBody
+	earth CelestialBody
+	moon  CelestialBody
 }
 
-// Update proceeds the game state.
-// Update is called every tick (1/60 [s] by default).
 func (g *Game) Update() error {
-	if inpututil.IsKeyJustPressed(ebiten.KeyW) {
-		g.orbit.apoapsis += 10
-	}
-
-	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
-		g.orbit.apoapsis -= 10
-	}
-
-	if inpututil.IsKeyJustPressed(ebiten.KeyA) {
-		g.orbit.inclination += 1
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyD) {
-		g.orbit.inclination -= 1
-	}
+	g.sun.Update()
+	g.earth.Update()
+	g.moon.Update()
 	return nil
 }
 
-// TrueAnomalyToPosition calculates the x, y position on the orbit using the true anomaly.
 func TrueAnomalyToPosition(a, e, inclination, theta float64) (float64, float64) {
 	// Calculate the radial distance for the current angle (true anomaly)
 	r := a * (1 - e*e) / (1 + e*math.Cos(theta))
@@ -73,59 +61,75 @@ func TrueAnomalyToPosition(a, e, inclination, theta float64) (float64, float64) 
 	return x, y
 }
 
-// DrawOrbit draws the orbit as an ellipse around the center of the screen, with inclination.
-func (g *Game) DrawOrbit(screen *ebiten.Image) {
-	cx, cy := screenWidth/2, screenHeight/2 // Center of the screen
-
+func (o *Orbit) Draw(cx, cy float64, screen *ebiten.Image) {
 	// Semi-major axis
-	a := (g.orbit.apoapsis + g.orbit.periapsis) / 2
+	a := (o.apoapsis + o.periapsis) / 2
 	// Eccentricity is pre-set
 
 	// Draw the orbit by sampling points along the true anomaly (theta)
 	numSteps := 1000
 
-	e := (a - g.orbit.periapsis) / a
+	e := (a - o.periapsis) / a
 
 	for i := 0; i < numSteps; i++ {
 		t1 := float64(i) / float64(numSteps) * 2 * math.Pi
 		t2 := float64(i+1) / float64(numSteps) * 2 * math.Pi
 
 		// Get positions for the two points on the ellipse
-		x1, y1 := TrueAnomalyToPosition(a, e, g.orbit.inclination, t1)
-		x2, y2 := TrueAnomalyToPosition(a, e, g.orbit.inclination, t2)
+		x1, y1 := TrueAnomalyToPosition(a, e, o.inclination, t1)
+		x2, y2 := TrueAnomalyToPosition(a, e, o.inclination, t2)
 
 		// Draw the orbit path
-		vector.StrokeLine(screen, float32(float64(cx)+x1), float32(float64(cy)+y1), float32(float64(cx)+x2), float32(float64(cy)+y2), 1, color.White, false)
+		vector.StrokeLine(screen, float32(cx+x1), float32(cy+y1), float32(cx+x2), float32(cy+y2), 1, color.White, false)
 	}
 }
 
-// DrawObjectOnOrbit draws the current position of the object on the orbit.
-func (g *Game) DrawObjectOnOrbit(screen *ebiten.Image) {
-	cx, cy := screenWidth/2, screenHeight/2 // Center of the screen
-
-	// Semi-major axis
-	a := (g.orbit.apoapsis + g.orbit.periapsis) / 2
-
-	// Calculate the current true anomaly based on position in the orbit
-	theta := g.orbit.position_on_orbit * 2 * math.Pi
-	e := (a - g.orbit.periapsis) / a
-
-	r := a * (1 - e*e) / (1 + e*math.Cos(theta))
-	// TODO:
-	// move this into it's on method and call it at each game update
-	// and use inherit mass / gravity
-	v := math.Sqrt(5.9 * math.Pow(8, 2) / 60 * (2/r - 1/a))
-
-	g.orbit.position_on_orbit += v / 100
-
-	if g.orbit.position_on_orbit >= 1 {
-		g.orbit.position_on_orbit = 0
+func (cb *CelestialBody) GetPosition() (x, y float64) {
+	if cb.parent == nil {
+		return screenWidth / 2, screenHeight / 2 // Center of the screen
 	}
 
-	x, y := TrueAnomalyToPosition(a, e, g.orbit.inclination, theta)
+	theta := cb.parent.position_on_orbit * 2 * math.Pi
+	a := (cb.parent.orbit.apoapsis + cb.parent.orbit.periapsis) / 2
+	e := (a - cb.parent.orbit.periapsis) / a
+	x, y = TrueAnomalyToPosition(a, e, cb.parent.orbit.inclination, theta)
 
-	// Draw the object as a small circle
-	vector.DrawFilledCircle(screen, float32(float64(cx)+x), float32(float64(cy)+y), 5, color.RGBA{255, 0, 0, 255}, false)
+	px, py := cb.parent.GetPosition()
+	return x + px, y + py
+}
+
+func (cb *CelestialBody) Update() {
+	// Semi-major axis
+	a := (cb.orbit.apoapsis + cb.orbit.periapsis) / 2
+
+	// Calculate the current true anomaly based on position in the orbit
+	theta := cb.position_on_orbit * 2 * math.Pi
+	e := (a - cb.orbit.periapsis) / a
+	r := a * (1 - e*e) / (1 + e*math.Cos(theta))
+	v := math.Sqrt(cb.mass * math.Pow(cb.gravity, 2) / 60 * (2/r - 1/a))
+
+	// this is not real, magic trick to emulate the behaviour of kepler's second law
+	cb.position_on_orbit += v * v / 100
+
+	if cb.position_on_orbit >= 1 {
+		cb.position_on_orbit = 0
+	}
+}
+
+func (cb *CelestialBody) Draw(screen *ebiten.Image) {
+	// Semi-major axis
+	a := (cb.orbit.apoapsis + cb.orbit.periapsis) / 2
+
+	// Calculate the current true anomaly based on position in the orbit
+	theta := cb.position_on_orbit * 2 * math.Pi
+	e := (a - cb.orbit.periapsis) / a
+
+	x, y := TrueAnomalyToPosition(a, e, cb.orbit.inclination, theta)
+	ax, ay := cb.GetPosition()
+
+	cb.orbit.Draw(ax, ay, screen)
+
+	vector.DrawFilledCircle(screen, float32(float64(ax)+x), float32(float64(ay)+y), 5, color.RGBA{255, 0, 0, 255}, false)
 }
 
 func (g *Game) DrawFocalPoint(screen *ebiten.Image) {
@@ -135,17 +139,12 @@ func (g *Game) DrawFocalPoint(screen *ebiten.Image) {
 }
 
 // Draw draws the game screen.
-// Draw is called every frame (typically 1/60[s] for 60Hz display).
 func (g *Game) Draw(screen *ebiten.Image) {
-	// Write your game's rendering.
-
 	screen.Fill(color.Black)
 
-	g.DrawOrbit(screen)
-
-	g.DrawFocalPoint(screen)
-
-	g.DrawObjectOnOrbit(screen)
+	g.sun.Draw(screen)
+	g.earth.Draw(screen)
+	g.moon.Draw(screen)
 }
 
 // Layout takes the outside size (e.g., the window size) and returns the (logical) screen size.
@@ -156,12 +155,40 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (_, _ int) {
 
 func main() {
 	game := &Game{}
-	game.orbit = Orbit{
-		inclination:       0,    // Inclination (tilt of the orbit)
-		apoapsis:          300,  // Apoapsis (furthest point)
-		periapsis:         100,  // Periapsis (closest point)
-		period:            1.0,  // Orbital period
+	game.sun = CelestialBody{
+		mass:    5.9,
+		gravity: 8,
+		orbit: &Orbit{
+			inclination: 0,   // Inclination (tilt of the orbit)
+			apoapsis:    300, // Apoapsis (furthest point)
+			periapsis:   100, // Periapsis (closest point)
+			period:      1.0, // Orbital period
+		},
 		position_on_orbit: 0.25, // Starting position on orbit
+	}
+
+	game.earth = CelestialBody{
+		parent:  &game.sun,
+		mass:    .9,
+		gravity: 8,
+		orbit: &Orbit{
+			inclination: 0,   // Inclination (tilt of the orbit)
+			apoapsis:    30,  // Apoapsis (furthest point)
+			periapsis:   20,  // Periapsis (closest point)
+			period:      1.0, // Orbital period
+		},
+		position_on_orbit: 0.25, // Starting position on orbit
+	}
+
+	// ignore that the moon shares orbit with he earth around the sun
+	// also ignore that the sun rotates around a center point
+	// this is not really very intuitive...
+	game.moon = CelestialBody{
+		parent:            &game.sun,
+		mass:              .9,
+		gravity:           3,
+		orbit:             game.earth.orbit,
+		position_on_orbit: .75,
 	}
 
 	// Specify the window size as you like. Here, a doubled size is specified.
