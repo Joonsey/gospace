@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
@@ -17,17 +18,27 @@ const (
 )
 
 type Vec2 struct {
-	X int
-	Y int
+	X float64
+	Y float64
+}
+
+type Entity struct {
+	Id       uint
+	position Vec2
+}
+
+type CelestialBodyDetails struct {
+	entities map[uint]Entity
 }
 
 type CelestialBody struct {
-	parent            *CelestialBody // Pointer to the parent entity, nil if no parent
-	orbit             *Orbit         // Orbital parameters, nil if not in an orbit
-	last_update_time  int64          // Timestamp of the last position update
-	position_on_orbit float64        // Current position in the orbit as a fraction of the period
-	mass              float64        // Mass of the celestial body
-	gravity           float64        // Gravitational pull force
+	parent            *CelestialBody       // Pointer to the parent entity, nil if no parent
+	orbit             *Orbit               // Orbital parameters, nil if not in an orbit
+	last_update_time  int64                // Timestamp of the last position update
+	position_on_orbit float64              // Current position in the orbit as a fraction of the period
+	mass              float64              // Mass of the celestial body
+	gravity           float64              // Gravitational pull force
+	details           CelestialBodyDetails // The details of the celestial body
 }
 
 type Orbit struct {
@@ -38,15 +49,37 @@ type Orbit struct {
 }
 
 type Game struct {
-	sun   CelestialBody
-	earth CelestialBody
-	moon  CelestialBody
+	sun          CelestialBody
+	earth        CelestialBody
+	moon         CelestialBody
+	focused_body *CelestialBody
 }
 
 func (g *Game) Update() error {
 	g.sun.Update()
 	g.earth.Update()
 	g.moon.Update()
+
+	o := g.earth.orbit
+	a := (o.apoapsis + o.periapsis) / 2
+	e := (a - o.periapsis) / a
+
+	theta := g.earth.parent.position_on_orbit * 2 * math.Pi
+	x, y := TrueAnomalyToPosition(a, e, o.inclination, theta)
+	ax, ay := g.earth.GetPosition()
+	cursor_x, cursor_y := ebiten.CursorPosition()
+	dist_x, dist_y := ax+x-float64(cursor_x), ay+y-float64(cursor_y)
+
+	log.Printf("%f %f\n", dist_x, dist_y)
+	// 5 should be the the radius of the planet. or similar
+	if math.Sqrt(dist_x*dist_x-dist_y*dist_y) < 5 {
+		// we can do on-hover logic here
+		// to draw cool shit when we hover the planet
+		if ebiten.IsKeyPressed(ebiten.KeyS) {
+			g.focused_body = &g.earth
+		}
+	}
+
 	return nil
 }
 
@@ -114,6 +147,11 @@ func (cb *CelestialBody) Update() {
 	if cb.position_on_orbit >= 1 {
 		cb.position_on_orbit = 0
 	}
+
+}
+
+func (cb *CelestialBodyDetails) Draw(screen *ebiten.Image) {
+	ebitenutil.DebugPrint(screen, "drawing details")
 }
 
 func (cb *CelestialBody) Draw(screen *ebiten.Image) {
@@ -142,9 +180,13 @@ func (g *Game) DrawFocalPoint(screen *ebiten.Image) {
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 
-	g.sun.Draw(screen)
-	g.earth.Draw(screen)
-	g.moon.Draw(screen)
+	if g.focused_body != nil {
+		g.focused_body.details.Draw(screen)
+	} else {
+		g.sun.Draw(screen)
+		g.earth.Draw(screen)
+		g.moon.Draw(screen)
+	}
 }
 
 // Layout takes the outside size (e.g., the window size) and returns the (logical) screen size.
